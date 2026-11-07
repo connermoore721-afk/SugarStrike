@@ -15,17 +15,31 @@ jobs:
       - name: Get the code
         uses: actions/checkout@v4
 
+      - name: Find the Xcode project (works even if it's inside folders)
+        run: |
+          PBX=$(find . -path ./.git -prune -o -path '*/SugarStrike.xcodeproj/project.pbxproj' -print | head -1)
+          if [ -z "$PBX" ]; then
+            echo "ERROR: couldn't find SugarStrike.xcodeproj/project.pbxproj anywhere in the repo."
+            echo "Files in the repo:"; find . -path ./.git -prune -o -type f -print | head -100
+            exit 1
+          fi
+          PROJDIR=$(cd "$(dirname "$(dirname "$PBX")")" && pwd)
+          echo "Found project in: $PROJDIR"
+          test -f "$PROJDIR/SugarStrike/game.html" || { echo "ERROR: SugarStrike/game.html must sit next to SugarStrike.xcodeproj"; exit 1; }
+          echo "PROJDIR=$PROJDIR" >> "$GITHUB_ENV"
+
       - name: Show Xcode version
         run: xcodebuild -version
 
       - name: Build the app (unsigned)
         run: |
+          cd "$PROJDIR"
           xcodebuild \
             -project SugarStrike.xcodeproj \
             -target SugarStrike \
             -configuration Release \
             -sdk iphoneos \
-            SYMROOT="$PWD/build" \
+            SYMROOT="$PROJDIR/build" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -33,7 +47,7 @@ jobs:
 
       - name: Check the app icon made it in
         run: |
-          APP="build/Release-iphoneos/SugarStrike.app"
+          APP="$PROJDIR/build/Release-iphoneos/SugarStrike.app"
           ls "$APP"
           test -f "$APP/Assets.car" || { echo "ERROR: icon catalog (Assets.car) missing"; exit 1; }
           ls "$APP"/AppIcon*.png >/dev/null 2>&1 || { echo "ERROR: AppIcon PNGs missing"; exit 1; }
@@ -42,8 +56,9 @@ jobs:
 
       - name: Package into SugarStrike.ipa
         run: |
-          APP="build/Release-iphoneos/SugarStrike.app"
-          test -d "$APP" || { echo "App not found"; ls -R build | head -50; exit 1; }
+          APP="$PROJDIR/build/Release-iphoneos/SugarStrike.app"
+          test -d "$APP" || { echo "App not found"; ls -R "$PROJDIR/build" | head -50; exit 1; }
+          rm -rf Payload SugarStrike.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -qry SugarStrike.ipa Payload
