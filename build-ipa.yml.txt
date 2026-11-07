@@ -1,0 +1,81 @@
+name: Build Sugar Strike IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Find the Xcode project (works even if it's inside folders)
+        run: |
+          PBX=$(find . -path ./.git -prune -o -path '*/SugarStrike.xcodeproj/project.pbxproj' -print | head -1)
+          if [ -z "$PBX" ]; then
+            echo "ERROR: couldn't find SugarStrike.xcodeproj/project.pbxproj anywhere in the repo."
+            echo "Files in the repo:"; find . -path ./.git -prune -o -type f -print | head -100
+            exit 1
+          fi
+          PROJDIR=$(cd "$(dirname "$(dirname "$PBX")")" && pwd)
+          echo "Found project in: $PROJDIR"
+          test -f "$PROJDIR/SugarStrike/game.html" || { echo "ERROR: SugarStrike/game.html must sit next to SugarStrike.xcodeproj"; exit 1; }
+          echo "PROJDIR=$PROJDIR" >> "$GITHUB_ENV"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build the app (unsigned)
+        run: |
+          cd "$PROJDIR"
+          xcodebuild \
+            -project SugarStrike.xcodeproj \
+            -target SugarStrike \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PROJDIR/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Check the app icon made it in
+        run: |
+          APP="$PROJDIR/build/Release-iphoneos/SugarStrike.app"
+          ls "$APP"
+          test -f "$APP/Assets.car" || { echo "ERROR: icon catalog (Assets.car) missing"; exit 1; }
+          ls "$APP"/AppIcon*.png >/dev/null 2>&1 || { echo "ERROR: AppIcon PNGs missing"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || { echo "ERROR: icon not listed in Info.plist"; exit 1; }
+          echo "App icon OK"
+
+      - name: Package into SugarStrike.ipa
+        run: |
+          APP="$PROJDIR/build/Release-iphoneos/SugarStrike.app"
+          test -d "$APP" || { echo "App not found"; ls -R "$PROJDIR/build" | head -50; exit 1; }
+          rm -rf Payload SugarStrike.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry SugarStrike.ipa Payload
+          ls -lh SugarStrike.ipa
+
+      - name: Upload IPA (Actions tab download)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SugarStrike-ipa
+          path: SugarStrike.ipa
+
+      - name: Publish IPA to Releases (direct download link)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" SugarStrike.ipa \
+            --title "Sugar Strike build ${{ github.run_number }}" \
+            --notes "Unsigned IPA. Install it with Sideloadly or AltStore, which sign it with your Apple ID." \
+            --latest
