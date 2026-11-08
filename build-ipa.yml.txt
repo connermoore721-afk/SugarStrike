@@ -2,7 +2,7 @@ name: Build Sugar Strike IPA
 
 on:
   push:
-    branches: [main, master]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:

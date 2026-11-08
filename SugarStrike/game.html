@@ -118,6 +118,12 @@ canvas#c,canvas#bg{display:block;position:fixed;inset:0}
 #edPal{display:grid;gap:4px;justify-content:center;overflow-y:auto;touch-action:pan-y}
 .pb{border-radius:10px;background:rgba(255,255,255,.08);border:2px solid transparent;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
 .pb canvas{width:92%;height:92%}.pb.on{border-color:#ffd23b;background:rgba(255,210,59,.22)}
+.svnow{background:rgba(255,255,255,.08);border-radius:14px;padding:9px 12px;font-weight:800;font-size:13px;margin:10px 0 4px;text-align:center}
+.svsec{font-weight:900;font-size:12px;letter-spacing:2px;opacity:.75;margin:14px 0 4px;text-align:center}
+.svta{width:100%;background:rgba(0,0,0,.35);color:#fff;border:2px solid rgba(255,255,255,.2);border-radius:12px;padding:8px;font:12px ui-monospace,monospace;resize:none;margin-top:6px;user-select:text;-webkit-user-select:text;touch-action:auto}
+.svprev{display:none;background:rgba(255,210,59,.14);border:2px solid rgba(255,210,59,.6);border-radius:14px;padding:10px 12px;margin-top:10px;font-weight:800;font-size:13px;text-align:center}
+.svprev b{font-family:"Lilita One",system-ui;font-weight:400;font-size:20px;display:block}
+.svstat{display:none;margin-top:10px;font-weight:900;font-size:14px;text-align:center}
 .conf{position:fixed;top:0;width:10px;height:16px;border-radius:3px;z-index:6;pointer-events:none;animation:floaty 3s linear forwards}
 </style>
 </head>
@@ -232,8 +238,28 @@ canvas#c,canvas#bg{display:block;position:fixed;inset:0}
 
 <!-- GUIDE -->
 <div class="ov full" id="guide">
-  <div class="topbar"><button class="back" id="guideBack">‹</button><div class="lil">CANDY GUIDE</div><span style="width:44px"></span></div>
+  <div class="topbar"><button class="back" id="guideBack">‹</button><div class="lil">CANDY GUIDE</div><button class="back" id="guideSave" title="Save &amp; Load progress" style="font-size:22px">💾</button></div>
   <div class="guide" id="guideBody"></div>
+</div>
+
+<!-- SAVE / LOAD -->
+<div class="ov" id="saves">
+  <div class="modal" style="text-align:left;max-height:100%;overflow-y:auto">
+    <button class="x" id="svClose">✕</button>
+    <h2 class="lil" style="font-size:30px;text-align:center">💾 SAVE &amp; LOAD</h2>
+    <div class="svnow" id="svNow"></div>
+    <div class="svsec">SAVE YOUR PROGRESS</div>
+    <div class="row"><button class="btn green sm" id="svSave">💾 Save to File</button><button class="btn alt sm" id="svCopy">📋 Copy Save Code</button></div>
+    <textarea id="svCode" class="svta" readonly rows="2"></textarea>
+    <div class="svsec">LOAD PROGRESS</div>
+    <div class="row"><button class="btn gold sm" id="svFileBtn">📂 Load from File</button></div>
+    <input type="file" id="svFile" style="display:none">
+    <textarea id="svPaste" class="svta" rows="2" placeholder="…or paste a save code here"></textarea>
+    <div class="row"><button class="btn alt sm" id="svPasteBtn">Load Code</button></div>
+    <div id="svPreview" class="svprev"><b>Load this save?</b><div id="svPrevText"></div><div style="font-size:12px;opacity:.8;margin:4px 0">This replaces the progress you have now.</div>
+      <div class="row"><button class="btn green sm" id="svYes">YES, LOAD IT</button><button class="btn alt sm" id="svNo">CANCEL</button></div></div>
+    <div id="svStatus" class="svstat"></div>
+  </div>
 </div>
 
 <script>
@@ -1405,6 +1431,58 @@ function edPaint(r,c){
  stars(p.x,p.y,'#fff',4,140,5);ring(p.x,p.y,'#ffd23b',L.board.cell*.5,4,.3);SFX.pop(2);buzz(5);
 }
 function boardCell(x,y){const b=L.board;if(x<b.x||x>=b.x+b.size||y<b.y||y>=b.y+b.size)return null;return[Math.floor((y-b.y)/b.cell),Math.floor((x-b.x)/b.cell)]}
+
+/* ================= save / load ================= */
+let pendingLoad=null;
+function saveText(){return JSON.stringify({game:'sugar-strike',version:2,saved:new Date().toISOString(),save:SAVE},null,1)}
+function saveCode(){const j=JSON.stringify({game:'sugar-strike',version:2,save:SAVE});return'SS2-'+btoa(unescape(encodeURIComponent(j)))}
+function svStatus(msg,ok){const el=$('svStatus');el.textContent=msg;el.style.color=ok===false?'#ff8fa3':'#9fffd9';el.style.display=msg?'block':'none'}
+function saveSummary(s){const st=Object.values(s.lv.stars).reduce((a,b)=>a+b,0),lvl=Math.min(100,s.lv.max-1);
+ const old=SAVE;SAVE=s;const sk=unlockedCount();SAVE=old;
+ return`⭐ ${st} stars · 🗺 ${lvl} level${lvl===1?'':'s'} beaten · 🏆 Free Play best ${(s.best||0).toLocaleString()} · 🎨 ${sk} skins`}
+function openSaves(){
+ $('svCode').value=saveCode();$('svNow').textContent=saveSummary(SAVE);$('svPaste').value='';$('svPreview').style.display='none';pendingLoad=null;svStatus('');
+ $('saves').classList.add('show');
+}
+async function saveToFile(){
+ const text=saveText(),dd=new Date(),pad=n=>String(n).padStart(2,'0'),name=`sugar-strike-save-${dd.getFullYear()}-${pad(dd.getMonth()+1)}-${pad(dd.getDate())}.json`;
+ const h=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.saveFile;
+ if(h){try{h.postMessage({name,text});svStatus('Pick "Save to Files" in the menu to keep your save file!');return}catch(e){}}
+ if(window.claude&&typeof window.claude.use==='function'){svStatus('Getting your file ready…');let dl=null;try{dl=await window.claude.use('downloads')}catch(e){}
+  if(dl){try{await dl.save({filename:name,data:text});svStatus('💾 Save file saved!')}catch(e){svStatus(e&&e.code==='declined'?'Save cancelled.':"Couldn't save a file here. Use Copy Save Code instead.",false)}return}}
+ try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+  svStatus('Save file sent to your downloads. If nothing showed up, use Copy Save Code instead.')}catch(e){svStatus('Downloads are blocked here. Use Copy Save Code instead.',false)}
+}
+function copyCode(){const code=saveCode(),ta=$('svCode');ta.value=code;
+ const fallback=()=>{ta.focus();ta.select();try{document.execCommand('copy');svStatus('Save code copied! Paste it somewhere safe, like Notes.')}catch(e){svStatus('Press and hold the code box, then Copy.',false)}};
+ try{navigator.clipboard.writeText(code).then(()=>svStatus('Save code copied! Paste it somewhere safe, like Notes.'),fallback)}catch(e){fallback()}}
+function parseSave(text){
+ text=(text||'').trim();if(!text)throw new Error('empty');let obj;
+ if(text[0]==='{')obj=JSON.parse(text);else{const raw=text.replace(/^SS2-/,'').replace(/\s+/g,'');obj=JSON.parse(decodeURIComponent(escape(atob(raw))))}
+ const s=obj&&obj.save?obj.save:obj;if(!s||typeof s!=='object'||!('best' in s||'lv' in s))throw new Error('not a save');
+ const d={best:Math.max(0,+s.best||0),bestWave:Math.max(0,+s.bestWave||0),skin:Math.max(0,s.skin|0),tut:!!s.tut,muted:!!s.muted,lv:{max:1,stars:{},best:{}}};
+ if(s.lv&&typeof s.lv==='object'){d.lv.max=clamp(s.lv.max|0,1,101);
+  for(const k in(s.lv.stars||{})){const n=k|0;if(n>=1&&n<=100)d.lv.stars[n]=clamp(s.lv.stars[k]|0,0,3)}
+  for(const k in(s.lv.best||{})){const n=k|0;if(n>=1&&n<=100)d.lv.best[n]=Math.max(0,+s.lv.best[k]||0)}}
+ if(d.skin>=SKINS.length)d.skin=0;return d;
+}
+function previewLoad(text){
+ try{pendingLoad=parseSave(text);$('svPrevText').textContent=saveSummary(pendingLoad);$('svPreview').style.display='block';svStatus('');$('svPreview').scrollIntoView({behavior:'smooth',block:'center'})}
+ catch(e){pendingLoad=null;$('svPreview').style.display='none';svStatus("That doesn't look like a Sugar Strike save. Check the file or code and try again.",false)}
+}
+function confirmLoad(){
+ if(!pendingLoad)return;SAVE=pendingLoad;pendingLoad=null;if(!skinUnlocked(SKINS[SAVE.skin]||SKINS[0]))SAVE.skin=0;persist();refreshTitle();
+ $('svPreview').style.display='none';$('svNow').textContent=saveSummary(SAVE);$('svCode').value=saveCode();svStatus('🎉 Progress loaded!');SFX.perk();
+}
+$('svFileBtn').onclick=()=>{SFX.click();$('svFile').value='';$('svFile').click()};
+$('svFile').onchange=e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>previewLoad(String(r.result));r.onerror=()=>svStatus("Couldn't read that file.",false);r.readAsText(f)};
+$('svSave').onclick=()=>{SFX.click();saveToFile()};
+$('svCopy').onclick=()=>{SFX.click();copyCode()};
+$('svPasteBtn').onclick=()=>{SFX.click();previewLoad($('svPaste').value)};
+$('svYes').onclick=()=>{confirmLoad()};
+$('svNo').onclick=()=>{pendingLoad=null;$('svPreview').style.display='none';svStatus('')};
+$('svClose').onclick=()=>{SFX.click();$('saves').classList.remove('show')};
+$('guideSave').onclick=()=>{ensureAudio();SFX.click();openSaves()};
 
 /* ================= render loop ================= */
 function render(){
